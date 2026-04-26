@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import threading
 import time
+from importlib import resources as package_resources
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +17,7 @@ import typer
 
 from .config import (
     DEFAULT_MODEL,
+    config_dir,
     config_path,
     delete_file_config,
     get_config,
@@ -35,6 +37,7 @@ training_app.add_typer(target_app, name="target")
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_TRAINING_ROOT = "/data/tarka-training"
 SPINNER_FRAMES = "|/-\\"
 
 
@@ -66,11 +69,32 @@ def openai_headers(api_key: str) -> dict[str, str]:
     return headers
 
 
-def script_path(name: str) -> Path:
-    path = REPO_ROOT / "scripts" / name
-    if not path.exists():
-        fail(f"Script not found: {path}", 1)
+def default_training_root() -> str:
+    return os.environ.get("TARKA_TRAINING_ROOT", DEFAULT_TRAINING_ROOT)
+
+
+def resource_path(kind: str, name: str) -> Path:
+    repo_path = REPO_ROOT / kind / name
+    if repo_path.exists():
+        return repo_path
+
+    resource = package_resources.files("tarka_cli").joinpath("resources", kind, name)
+    if not resource.is_file():
+        fail(f"Packaged resource not found: {kind}/{name}", 1)
+
+    cache_dir = config_dir() / "resources" / kind
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / name
+    content = resource.read_bytes()
+    if not path.exists() or path.read_bytes() != content:
+        path.write_bytes(content)
+        if kind == "scripts":
+            path.chmod(0o755)
     return path
+
+
+def script_path(name: str) -> Path:
+    return resource_path("scripts", name)
 
 
 def get_training_targets() -> dict[str, dict[str, object]]:
@@ -147,7 +171,7 @@ def remote_workspace(target: dict[str, object]) -> str:
     workspace = target_value(target, "workspace")
     if workspace:
         return workspace.rstrip("/")
-    root = target_value(target, "root", "/data/tarka-training").rstrip("/")
+    root = target_value(target, "root", default_training_root()).rstrip("/")
     org = target_value(target, "org")
     if not org:
         fail("Target is missing workspace and org.", 2)
@@ -361,7 +385,7 @@ def target_add(
     user: str = typer.Option(..., "--user"),
     org: str = typer.Option(..., "--org", help="Training org slug."),
     workspace: Optional[str] = typer.Option(None, "--workspace"),
-    root: str = typer.Option("/data/tarka-training", "--root"),
+    root: Optional[str] = typer.Option(None, "--root", help="Training root. Defaults to TARKA_TRAINING_ROOT or /data/tarka-training."),
     port: int = typer.Option(22, "--port"),
     remote_tarka_cmd: str = typer.Option("tarka", "--remote-tarka", help="Remote tarka command/path."),
     make_default: bool = typer.Option(True, "--default/--no-default"),
@@ -369,14 +393,15 @@ def target_add(
 ) -> None:
     """Add or update a remote training target."""
     targets = get_training_targets()
-    workspace_value = workspace or f"{root.rstrip('/')}/users/{org}"
+    root_value = (root or default_training_root()).rstrip("/")
+    workspace_value = workspace or f"{root_value}/users/{org}"
     if remote_tarka_cmd.startswith("~/"):
         remote_tarka_cmd = f"/home/{user}/{remote_tarka_cmd[2:]}"
     targets[name] = {
         "host": host,
         "user": user,
         "org": org,
-        "root": root.rstrip("/"),
+        "root": root_value,
         "workspace": workspace_value.rstrip("/"),
         "port": port,
         "remote_tarka": remote_tarka_cmd,
@@ -649,7 +674,7 @@ def training_init(
     force: bool = typer.Option(False, "--force", help="Overwrite existing output."),
 ) -> None:
     """Create a local training request file."""
-    source = REPO_ROOT / "docs" / ("training_request.example.yaml" if yaml_example else "training_request_template.md")
+    source = resource_path("docs", "training_request.example.yaml" if yaml_example else "training_request_template.md")
     if output.exists() and not force:
         fail(f"Refusing to overwrite existing file: {output}. Use --force.", 2)
     shutil.copyfile(source, output)
@@ -662,7 +687,7 @@ def training_handoff(
     force: bool = typer.Option(False, "--force", help="Overwrite existing output."),
 ) -> None:
     """Create a customer handoff note from the template."""
-    source = REPO_ROOT / "docs" / "training_customer_handoff_template.md"
+    source = resource_path("docs", "training_customer_handoff_template.md")
     if output.exists() and not force:
         fail(f"Refusing to overwrite existing file: {output}. Use --force.", 2)
     shutil.copyfile(source, output)
@@ -673,7 +698,7 @@ def training_handoff(
 def training_check(
     org_slug: Optional[str] = typer.Argument(None),
     run_name: str = typer.Option("preflight", "--run-name"),
-    root: Path = typer.Option(Path("/data/tarka-training"), "--root", help="Training root."),
+    root: Optional[Path] = typer.Option(None, "--root", help="Training root. Defaults to TARKA_TRAINING_ROOT or /data/tarka-training."),
     target: Optional[str] = typer.Option(None, "--target", "-t", help="Remote training target."),
     expect_gpu: bool = typer.Option(True, "--expect-gpu/--skip-gpu"),
     expect_docker: bool = typer.Option(True, "--expect-docker/--skip-docker"),
@@ -682,6 +707,7 @@ def training_check(
     min_free_gb: int = typer.Option(100, "--min-free-gb"),
 ) -> None:
     """Run workspace preflight checks."""
+    training_root = root or Path(default_training_root())
     if target:
         _, remote = resolve_target(target)
         org = remote_org(remote, org_slug)
@@ -708,7 +734,7 @@ def training_check(
     env = os.environ.copy()
     env.update(
         {
-            "TARKA_TRAINING_ROOT": str(root),
+            "TARKA_TRAINING_ROOT": str(training_root),
             "TARKA_EXPECT_GPU": "1" if expect_gpu else "0",
             "TARKA_EXPECT_DOCKER": "1" if expect_docker else "0",
             "TARKA_EXPECT_DATA": "1" if expect_data else "0",
@@ -724,7 +750,7 @@ def training_check(
 def training_summary(
     org_slug: str,
     run_name: str,
-    root: Path = typer.Option(Path("/data/tarka-training"), "--root"),
+    root: Optional[Path] = typer.Option(None, "--root", help="Training root. Defaults to TARKA_TRAINING_ROOT or /data/tarka-training."),
     workload: Optional[str] = typer.Option(None, "--workload"),
     tool: Optional[str] = typer.Option(None, "--tool"),
     repo: Optional[Path] = typer.Option(None, "--repo"),
@@ -733,8 +759,9 @@ def training_summary(
     exit_status: Optional[str] = typer.Option(None, "--exit-status"),
 ) -> None:
     """Generate a markdown run summary."""
+    training_root = root or Path(default_training_root())
     env = os.environ.copy()
-    env["TARKA_TRAINING_ROOT"] = str(root)
+    env["TARKA_TRAINING_ROOT"] = str(training_root)
     if workload:
         env["TARKA_WORKLOAD"] = workload
     if tool:
@@ -756,7 +783,7 @@ def training_run(
     ctx: typer.Context,
     org_slug: Optional[str] = typer.Argument(None),
     run_name: str = typer.Option("run-001", "--run-name"),
-    root: Path = typer.Option(Path("/data/tarka-training"), "--root"),
+    root: Optional[Path] = typer.Option(None, "--root", help="Training root. Defaults to TARKA_TRAINING_ROOT or /data/tarka-training."),
     cwd: Optional[Path] = typer.Option(None, "--cwd", help="Command working directory."),
     target: Optional[str] = typer.Option(None, "--target", "-t", help="Remote training target."),
     detach: bool = typer.Option(False, "--detach", help="Start remote run in tmux and return."),
@@ -764,6 +791,7 @@ def training_run(
     no_spinner: bool = typer.Option(False, "--no-spinner", help="Disable running status indicator."),
 ) -> None:
     """Run a training command inside a Phase 0 workspace."""
+    training_root = root or Path(default_training_root())
     command = list(ctx.args)
     if not command:
         fail("Training command is required after '--'.", 2)
@@ -803,7 +831,7 @@ def training_run(
         fail("ORG_SLUG is required unless --target is provided.", 2)
     if detach:
         fail("--detach is only supported with --target.", 2)
-    workspace = training_workspace(root, org_slug)
+    workspace = training_workspace(training_root, org_slug)
     if not workspace.exists():
         fail(f"Workspace does not exist: {workspace}", 1)
     command_cwd = cwd or workspace
@@ -827,13 +855,14 @@ def training_run(
 def training_monitor(
     org_slug: Optional[str] = typer.Argument(None),
     run_name: str = typer.Option("run-001", "--run-name"),
-    root: Path = typer.Option(Path("/data/tarka-training"), "--root"),
+    root: Optional[Path] = typer.Option(None, "--root", help="Training root. Defaults to TARKA_TRAINING_ROOT or /data/tarka-training."),
     target: Optional[str] = typer.Option(None, "--target", "-t", help="Remote training target."),
     lines: int = typer.Option(40, "--lines", min=0),
     seconds: Optional[int] = typer.Option(None, "--seconds", min=1, help="Stop monitoring after this many seconds."),
     no_spinner: bool = typer.Option(False, "--no-spinner"),
 ) -> None:
     """Follow a training log with a lightweight running indicator."""
+    training_root = root or Path(default_training_root())
     if target:
         _, remote = resolve_target(target)
         org = remote_org(remote, org_slug)
@@ -857,7 +886,7 @@ def training_monitor(
 
     if not org_slug:
         fail("ORG_SLUG is required unless --target is provided.", 2)
-    workspace = training_workspace(root, org_slug)
+    workspace = training_workspace(training_root, org_slug)
     log_path = workspace / "logs" / f"{run_name}.log"
     if not log_path.exists():
         fail(f"Log file does not exist: {log_path}", 1)
@@ -1029,11 +1058,12 @@ def training_ssh_info(
     org_slug: str,
     host: str = typer.Option("<training-host>", "--host"),
     user: Optional[str] = typer.Option(None, "--user"),
-    root: Path = typer.Option(Path("/data/tarka-training"), "--root"),
+    root: Optional[Path] = typer.Option(None, "--root", help="Training root. Defaults to TARKA_TRAINING_ROOT or /data/tarka-training."),
 ) -> None:
     """Print SSH/workspace instructions for an operator-assisted training user."""
+    training_root = root or Path(default_training_root())
     ssh_user = user or f"tarka_{org_slug.replace('-', '_')}"
-    workspace = root / "users" / org_slug
+    workspace = training_root / "users" / org_slug
     typer.echo(f"ssh: ssh {ssh_user}@{host}")
     typer.echo(f"workspace: {workspace}")
     typer.echo(f"datasets: {workspace / 'datasets'}")
