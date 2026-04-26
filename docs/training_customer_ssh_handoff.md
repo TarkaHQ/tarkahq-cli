@@ -87,7 +87,7 @@ tarka --help
 Pinned pilot install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.2 bash
+curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.3 bash
 ```
 
 This pilot installer currently uses the Python prototype. The long-term

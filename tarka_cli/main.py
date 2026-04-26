@@ -1027,12 +1027,19 @@ def training_run(
     """Run a training command inside a Phase 0 workspace."""
     training_root = root or Path(default_training_root())
     command = list(ctx.args)
-    if not command:
-        fail("Training command is required after '--'.", 2)
 
     if target:
         _, remote = resolve_target(target)
-        org = remote_org(remote, org_slug)
+        org = remote_org(remote)
+        if org_slug:
+            if org_slug == org and command:
+                # Backward compatibility for the old
+                # `training run <org> --target ... -- <command>` form.
+                pass
+            else:
+                command.insert(0, org_slug)
+        if not command:
+            fail("Training command is required after '--'.", 2)
         remote_cwd = remote_path(remote, cwd or ".")
         remote_command = [
             remote_tarka(remote),
@@ -1061,6 +1068,8 @@ def training_run(
             raise typer.Exit(return_code)
         raise typer.Exit(run_remote(remote, remote_command))
 
+    if not command:
+        fail("Training command is required after '--'.", 2)
     if not org_slug:
         fail("ORG_SLUG is required unless --target is provided.", 2)
     if detach:

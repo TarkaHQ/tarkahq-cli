@@ -161,6 +161,75 @@ def test_training_clone_repo_dry_run_defaults_repo_destination(
     assert "git checkout --detach main" in result.output
 
 
+def test_training_run_target_does_not_capture_command_as_org(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("TARKA_CONFIG_DIR", str(tmp_path / "config"))
+    captured: dict[str, object] = {}
+
+    add = runner.invoke(
+        app,
+        [
+            "training",
+            "target",
+            "add",
+            "dgx",
+            "--host",
+            "gpu.example.com",
+            "--user",
+            "alice",
+            "--org",
+            "customer-one",
+            "--remote-tarka",
+            "/home/alice/.local/bin/tarka",
+        ],
+    )
+    assert add.exit_code == 0
+
+    def fake_run_remote(target: dict[str, object], command: list[str]) -> int:
+        captured["target"] = target
+        captured["command"] = command
+        return 0
+
+    monkeypatch.setattr(main, "run_remote", fake_run_remote)
+
+    result = runner.invoke(
+        app,
+        [
+            "training",
+            "run",
+            "--target",
+            "dgx",
+            "--run-name",
+            "setup",
+            "--cwd",
+            "repos/nanochat",
+            "--",
+            "bash",
+            "-lc",
+            "uv sync --extra gpu",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == [
+        "/home/alice/.local/bin/tarka",
+        "training",
+        "run",
+        "customer-one",
+        "--root",
+        "/data/tarka-training",
+        "--run-name",
+        "setup",
+        "--cwd",
+        "/data/tarka-training/users/customer-one/repos/nanochat",
+        "--",
+        "bash",
+        "-lc",
+        "uv sync --extra gpu",
+    ]
+
+
 def test_keys_list_points_to_app(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("TARKA_CONFIG_DIR", str(tmp_path / "config"))
 
