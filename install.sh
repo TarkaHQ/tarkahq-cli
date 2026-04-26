@@ -80,7 +80,7 @@ resolve_source() {
       rm -rf "${SOURCE_DIR}"
       git clone "${source}" "${SOURCE_DIR}"
     fi
-    git -C "${SOURCE_DIR}" checkout "${GIT_REF}"
+    git -C "${SOURCE_DIR}" checkout "${GIT_REF}" >/dev/null
     git -C "${SOURCE_DIR}" pull --ff-only origin "${GIT_REF}" >/dev/null 2>&1 || true
     echo "${SOURCE_DIR}"
     return
