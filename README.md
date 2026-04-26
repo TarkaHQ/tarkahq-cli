@@ -14,7 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh
 Pinned pilot install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.3 bash
+curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.4 bash
 ```
 
 The short install domain `https://install.tarkahq.com/cli` is not live

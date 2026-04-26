@@ -220,8 +220,11 @@ def run_remote(target: dict[str, object], command: list[str]) -> int:
     return result.returncode
 
 
-def run_remote_shell(target: dict[str, object], script: str) -> int:
-    result = subprocess.run(ssh_prefix(target) + ["bash", "-s"], input=script, text=True)
+def run_remote_shell(target: dict[str, object], script: str, args: Optional[list[str]] = None) -> int:
+    command = ssh_prefix(target) + ["bash", "-s", "--"]
+    if args:
+        command.extend(args)
+    result = subprocess.run(command, input=script, text=True)
     return result.returncode
 
 
@@ -272,6 +275,74 @@ def abs_workspace_path(workspace: str | Path, value: str | Path) -> str:
 
 def shell_assign(name: str, value: str) -> str:
     return f"{name}={shlex.quote(value)}"
+
+
+def shell_export(name: str, value: str) -> str:
+    return f"export {shell_assign(name, value)}"
+
+
+def remote_run_shell_script(
+    *,
+    workspace: str,
+    cwd: str,
+    run_name: str,
+    command: list[str],
+    follow: bool,
+) -> str:
+    command_items = " ".join(shlex.quote(item) for item in command)
+    follow_flag = "1" if follow else "0"
+    return f"""set -euo pipefail
+{shell_assign("WORKSPACE", workspace)}
+{shell_assign("RUN_NAME", run_name)}
+{shell_assign("COMMAND_CWD", cwd)}
+FOLLOW_OUTPUT={follow_flag}
+LOG_PATH="${{WORKSPACE}}/logs/${{RUN_NAME}}.log"
+HF_HOME="${{WORKSPACE}}/scratch/huggingface"
+HF_DATASETS_CACHE="${{HF_HOME}}/datasets"
+REMOTE_COMMAND=({command_items})
+
+if [[ ! -d "${{WORKSPACE}}" ]]; then
+  echo "Workspace does not exist: ${{WORKSPACE}}" >&2
+  exit 1
+fi
+if [[ ! -d "${{COMMAND_CWD}}" ]]; then
+  echo "Working directory does not exist: ${{COMMAND_CWD}}" >&2
+  exit 1
+fi
+
+mkdir -p "${{WORKSPACE}}/logs" "${{HF_HOME}}" "${{HF_DATASETS_CACHE}}"
+export WORKSPACE HF_HOME HF_DATASETS_CACHE
+export HF_HUB_DISABLE_XET=1
+export PYTHONUNBUFFERED=1
+export TARKA_RUN_NAME="${{RUN_NAME}}"
+
+printf 'run pid: %s\\n' "$$"
+printf 'log: %s\\n' "${{LOG_PATH}}"
+{{
+  printf '\\n# command:'
+  printf ' %q' "${{REMOTE_COMMAND[@]}}"
+  printf '\\n# cwd: %s\\n' "${{COMMAND_CWD}}"
+  printf '# started_utc: %s\\n\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}} >> "${{LOG_PATH}}"
+
+cd "${{COMMAND_CWD}}"
+set +e
+if [[ "${{FOLLOW_OUTPUT}}" == "1" ]]; then
+  "${{REMOTE_COMMAND[@]}}" 2>&1 | tee -a "${{LOG_PATH}}"
+  status="${{PIPESTATUS[0]}}"
+else
+  "${{REMOTE_COMMAND[@]}}" >> "${{LOG_PATH}}" 2>&1
+  status="$?"
+fi
+set -e
+
+{{
+  printf '\\n# finished_utc: %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '# exit_code: %s\\n' "${{status}}"
+}} >> "${{LOG_PATH}}"
+printf 'exit_code: %s\\n' "${{status}}"
+exit "${{status}}"
+"""
 
 
 def hf_stage_shell_script(
@@ -945,23 +1016,18 @@ def training_check(
     if target:
         _, remote = resolve_target(target)
         org = remote_org(remote, org_slug)
-        command = [
-            remote_tarka(remote),
-            "training",
-            "check",
-            org,
-            "--root",
-            remote_root(remote),
-            "--run-name",
-            run_name,
-            "--min-free-gb",
-            str(min_free_gb),
-        ]
-        command.append("--expect-gpu" if expect_gpu else "--skip-gpu")
-        command.append("--expect-docker" if expect_docker else "--skip-docker")
-        command.append("--expect-data" if expect_data else "--skip-data")
-        command.append("--expect-repo" if expect_repo else "--skip-repo")
-        raise typer.Exit(run_remote(remote, command))
+        script = "\n".join(
+            [
+                shell_export("TARKA_TRAINING_ROOT", remote_root(remote)),
+                shell_export("TARKA_EXPECT_GPU", "1" if expect_gpu else "0"),
+                shell_export("TARKA_EXPECT_DOCKER", "1" if expect_docker else "0"),
+                shell_export("TARKA_EXPECT_DATA", "1" if expect_data else "0"),
+                shell_export("TARKA_EXPECT_REPO", "1" if expect_repo else "0"),
+                shell_export("TARKA_MIN_FREE_GB", str(min_free_gb)),
+                script_path("training_preflight.sh").read_text(encoding="utf-8"),
+            ]
+        )
+        raise typer.Exit(run_remote_shell(remote, script, [org, run_name]))
 
     if not org_slug:
         fail("ORG_SLUG is required unless --target is provided.", 2)
@@ -1041,32 +1107,21 @@ def training_run(
         if not command:
             fail("Training command is required after '--'.", 2)
         remote_cwd = remote_path(remote, cwd or ".")
-        remote_command = [
-            remote_tarka(remote),
-            "training",
-            "run",
-            org,
-            "--root",
-            remote_root(remote),
-            "--run-name",
-            run_name,
-            "--cwd",
-            remote_cwd,
-        ]
-        if no_follow:
-            remote_command.append("--no-follow")
-        if no_spinner:
-            remote_command.append("--no-spinner")
-        remote_command.append("--")
-        remote_command.extend(command)
+        script = remote_run_shell_script(
+            workspace=remote_workspace(remote),
+            cwd=remote_cwd,
+            run_name=run_name,
+            command=command,
+            follow=not no_follow,
+        )
         if detach:
-            tmux_command = ["tmux", "new-session", "-d", "-s", run_name, shlex.join(remote_command)]
+            tmux_command = ["tmux", "new-session", "-d", "-s", run_name, f"bash -lc {shlex.quote(script)}"]
             return_code = run_remote(remote, tmux_command)
             if return_code == 0:
                 typer.echo(f"started remote session: {run_name}")
                 typer.echo(f"logs: tarka training logs --target {target} --run-name {run_name} --follow")
             raise typer.Exit(return_code)
-        raise typer.Exit(run_remote(remote, remote_command))
+        raise typer.Exit(run_remote_shell(remote, script))
 
     if not command:
         fail("Training command is required after '--'.", 2)
@@ -1109,22 +1164,10 @@ def training_monitor(
     if target:
         _, remote = resolve_target(target)
         org = remote_org(remote, org_slug)
-        command = [
-            remote_tarka(remote),
-            "training",
-            "monitor",
-            org,
-            "--root",
-            remote_root(remote),
-            "--run-name",
-            run_name,
-            "--lines",
-            str(lines),
-        ]
+        log_path = f"{remote_root(remote).rstrip('/')}/users/{org}/logs/{run_name}.log"
+        command = ["tail", "-n", str(lines), "-f", log_path]
         if seconds is not None:
-            command.extend(["--seconds", str(seconds)])
-        if no_spinner:
-            command.append("--no-spinner")
+            command = ["timeout", str(seconds)] + command
         raise typer.Exit(run_remote(remote, command))
 
     if not org_slug:

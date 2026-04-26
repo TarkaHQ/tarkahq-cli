@@ -64,7 +64,7 @@ The installer:
 After tagging releases, prefer installing immutable artifacts:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.3 bash
+curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.4 bash
 ```
 
 ## Homebrew Later
@@ -92,7 +92,7 @@ class Tarka < Formula
 
   desc "Tarka CLI"
   homepage "https://tarkahq.com"
-  url "https://github.com/TarkaHQ/tarkahq-cli/archive/refs/tags/v0.1.3.tar.gz"
+  url "https://github.com/TarkaHQ/tarkahq-cli/archive/refs/tags/v0.1.4.tar.gz"
   sha256 "<release-sha256>"
   license "MIT"
 
@@ -109,7 +109,7 @@ end
 ```
 
 The `TarkaHQ/homebrew-tap` repo exists and the formula points at
-`v0.1.3`, but treat Homebrew as experimental until the dependency
+`v0.1.4`, but treat Homebrew as experimental until the dependency
 resources and install smoke test are finished.
 
 ## Recommended Order

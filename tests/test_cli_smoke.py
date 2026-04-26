@@ -186,12 +186,15 @@ def test_training_run_target_does_not_capture_command_as_org(
     )
     assert add.exit_code == 0
 
-    def fake_run_remote(target: dict[str, object], command: list[str]) -> int:
+    def fake_run_remote_shell(
+        target: dict[str, object], script: str, args: list[str] | None = None
+    ) -> int:
         captured["target"] = target
-        captured["command"] = command
+        captured["script"] = script
+        captured["args"] = args
         return 0
 
-    monkeypatch.setattr(main, "run_remote", fake_run_remote)
+    monkeypatch.setattr(main, "run_remote_shell", fake_run_remote_shell)
 
     result = runner.invoke(
         app,
@@ -212,22 +215,70 @@ def test_training_run_target_does_not_capture_command_as_org(
     )
 
     assert result.exit_code == 0
-    assert captured["command"] == [
-        "/home/alice/.local/bin/tarka",
-        "training",
-        "run",
-        "customer-one",
-        "--root",
-        "/data/tarka-training",
-        "--run-name",
-        "setup",
-        "--cwd",
-        "/data/tarka-training/users/customer-one/repos/nanochat",
-        "--",
-        "bash",
-        "-lc",
-        "uv sync --extra gpu",
-    ]
+    assert captured["args"] is None
+    script = str(captured["script"])
+    assert "/home/alice/.local/bin/tarka" not in script
+    assert "WORKSPACE=/data/tarka-training/users/customer-one" in script
+    assert "RUN_NAME=setup" in script
+    assert "COMMAND_CWD=/data/tarka-training/users/customer-one/repos/nanochat" in script
+    assert "REMOTE_COMMAND=(bash -lc 'uv sync --extra gpu')" in script
+
+
+def test_training_check_target_sends_preflight_script(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("TARKA_CONFIG_DIR", str(tmp_path / "config"))
+    captured: dict[str, object] = {}
+
+    add = runner.invoke(
+        app,
+        [
+            "training",
+            "target",
+            "add",
+            "dgx",
+            "--host",
+            "gpu.example.com",
+            "--user",
+            "alice",
+            "--org",
+            "customer-one",
+            "--remote-tarka",
+            "/home/alice/.local/bin/tarka",
+        ],
+    )
+    assert add.exit_code == 0
+
+    def fake_run_remote_shell(
+        target: dict[str, object], script: str, args: list[str] | None = None
+    ) -> int:
+        captured["target"] = target
+        captured["script"] = script
+        captured["args"] = args
+        return 0
+
+    monkeypatch.setattr(main, "run_remote_shell", fake_run_remote_shell)
+
+    result = runner.invoke(
+        app,
+        [
+            "training",
+            "check",
+            "--target",
+            "dgx",
+            "--expect-repo",
+            "--skip-docker",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["args"] == ["customer-one", "preflight"]
+    script = str(captured["script"])
+    assert "/home/alice/.local/bin/tarka" not in script
+    assert "export TARKA_TRAINING_ROOT=/data/tarka-training" in script
+    assert "export TARKA_EXPECT_REPO=1" in script
+    assert "export TARKA_EXPECT_DOCKER=0" in script
+    assert "Training preflight" in script
 
 
 def test_keys_list_points_to_app(tmp_path: Path, monkeypatch) -> None:
