@@ -1,0 +1,48 @@
+# This is not a submitted product schema yet. It is a working request
+# shape for operator-assisted training access.
+
+org_slug: acme
+contact:
+  name: Example User
+  email: user@example.com
+  timezone: America/Los_Angeles
+
+workload:
+  type: LoRA/QLoRA fine-tune
+  preferred_tool: Axolotl
+  base_model: Qwen/Qwen3-8B
+  model_size: 8B
+  sequence_length: 4096
+  expected_runtime: overnight
+  training_window: overnight
+  success_criterion: checkpoint is produced and can be loaded for eval
+
+code:
+  repo_url: git@github.com:example/train.git
+  repo_visibility: private
+  commit_or_tag: main
+  config_path: train.yml
+  entrypoint_command: axolotl train train.yml
+  dependency_files:
+    - requirements.txt
+
+data:
+  source_type: Hugging Face
+  source: org/dataset
+  dataset_size: 10GB
+  sample_size_for_smoke: 100MB
+  text_column_or_format: text
+
+secrets:
+  required:
+    - HF_TOKEN
+    - WANDB_API_KEY
+  handoff: agreed out-of-band secret channel
+
+outputs:
+  expected_checkpoint_size: 20GB
+  expected_artifacts:
+    - adapter checkpoint
+    - training log
+  artifact_handoff: tarball
+  retention_window: 7 days
