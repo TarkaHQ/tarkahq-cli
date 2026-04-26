@@ -404,6 +404,7 @@ fi
 export HF_HOME="${{WORKSPACE}}/scratch/huggingface"
 export HF_DATASETS_CACHE="${{HF_HOME}}/datasets"
 export HF_HUB_DISABLE_XET=1
+export WORKSPACE DEST
 mkdir -p "${{DEST}}" "${{HF_HOME}}" "${{HF_DATASETS_CACHE}}"
 {maybe_install}"${{PYTHON_BIN}}" - <<'PY'
 from __future__ import annotations

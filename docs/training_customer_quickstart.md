@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh
 Pinned pilot install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.4 bash
+curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.5 bash
 ```
 
 If your shell cannot find `tarka`, add `~/.local/bin` to your `PATH`.

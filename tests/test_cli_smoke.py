@@ -117,6 +117,8 @@ def test_training_stage_hf_dry_run_uses_target(tmp_path: Path, monkeypatch) -> N
     assert "IRIIS-RESEARCH/Nepali-Text-Corpus" in result.output
     assert "scratch/nanochat/base_data_climbmix" in result.output
     assert "nanochat-parquet" in result.output
+    assert "export WORKSPACE DEST" in result.output
+    assert 'DEST = Path(os.environ["DEST"])' in result.output
 
 
 def test_training_clone_repo_dry_run_defaults_repo_destination(
