@@ -38,17 +38,16 @@ CLI binary: tarka
 
 ## Pilot Install: Curl
 
-Once a public CLI repo or hosted installer exists, the customer command
-should be:
-
-```bash
-curl -fsSL https://install.tarkahq.com/cli | bash
-```
-
-Fallback while DNS is being configured:
+Use the public GitHub installer for pilots:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | bash
+```
+
+Once DNS is configured, wrap the same installer behind:
+
+```bash
+curl -fsSL https://install.tarkahq.com/cli | bash
 ```
 
 The installer:
@@ -65,27 +64,17 @@ The installer:
 After tagging releases, prefer installing immutable artifacts:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/v0.1.0/install.sh | bash
-```
-
-Or point the installer at a release tarball:
-
-```bash
-TARKA_CLI_SOURCE=https://github.com/TarkaHQ/tarkahq-cli/archive/refs/tags/v0.1.0.tar.gz \
-  bash install.sh
+curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.0 bash
 ```
 
 ## Homebrew Later
 
 Homebrew is the right customer-quality install path for macOS/Linux once
-we have:
+we finish:
 
 ```text
-versioned GitHub releases
-release tarball SHA256
-a stable package name
-a TarkaHQ/homebrew-tap repo
-basic smoke test in the formula
+Python dependency resource vendoring
+formula install smoke test
 ```
 
 Target command:
@@ -119,8 +108,9 @@ class Tarka < Formula
 end
 ```
 
-Do not publish the Homebrew formula until the release URL and SHA are
-real.
+The `TarkaHQ/homebrew-tap` repo exists and the formula points at
+`v0.1.0`, but treat Homebrew as experimental until the dependency
+resources and install smoke test are finished.
 
 ## Recommended Order
 

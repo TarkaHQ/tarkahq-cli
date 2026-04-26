@@ -8,14 +8,11 @@ training access.
 Pilot installer:
 
 ```bash
-curl -fsSL https://install.tarkahq.com/cli | bash
-```
-
-Until `install.tarkahq.com` is live:
-
-```bash
 curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | bash
 ```
+
+The short install domain `https://install.tarkahq.com/cli` is not live
+yet; use the GitHub installer above for pilots.
 
 If your shell cannot find `tarka`, add `~/.local/bin` to your `PATH`:
 

@@ -79,7 +79,7 @@ workspace.
 Install the pilot CLI:
 
 ```bash
-curl -fsSL https://install.tarkahq.com/cli | bash
+curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 tarka --help
 ```

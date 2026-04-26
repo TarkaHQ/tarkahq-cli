@@ -15,7 +15,7 @@ yet.
 Install the CLI:
 
 ```bash
-curl -fsSL https://install.tarkahq.com/cli | bash
+curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | bash
 ```
 
 If your shell cannot find `tarka`, add `~/.local/bin` to your `PATH`.

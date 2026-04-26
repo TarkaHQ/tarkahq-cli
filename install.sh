@@ -14,7 +14,7 @@ For published installs, pass a Git repository URL.
 Examples:
   ./install.sh
   ./install.sh https://github.com/TarkaHQ/tarkahq-cli.git
-  curl -fsSL https://install.tarkahq.com/cli | bash
+  curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | bash
 
 Environment:
   TARKA_CLI_SOURCE       install source if no argument is provided
