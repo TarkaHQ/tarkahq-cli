@@ -84,6 +84,12 @@ export PATH="$HOME/.local/bin:$PATH"
 tarka --help
 ```
 
+Pinned pilot install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.2 bash
+```
+
 This pilot installer currently uses the Python prototype. The long-term
 install path will be a native `tarka` binary via Homebrew or a
 release-backed curl installer.

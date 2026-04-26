@@ -220,6 +220,11 @@ def run_remote(target: dict[str, object], command: list[str]) -> int:
     return result.returncode
 
 
+def run_remote_shell(target: dict[str, object], script: str) -> int:
+    result = subprocess.run(ssh_prefix(target) + ["bash", "-s"], input=script, text=True)
+    return result.returncode
+
+
 def ensure_remote_dir(target: dict[str, object], path: str) -> None:
     result = run_remote(target, ["mkdir", "-p", path])
     if result != 0:
@@ -256,6 +261,235 @@ def workspace_env(workspace: Path) -> dict[str, str]:
         }
     )
     return env
+
+
+def abs_workspace_path(workspace: str | Path, value: str | Path) -> str:
+    raw = str(value)
+    if raw.startswith("/"):
+        return raw
+    return f"{str(workspace).rstrip('/')}/{raw.lstrip('/')}"
+
+
+def shell_assign(name: str, value: str) -> str:
+    return f"{name}={shlex.quote(value)}"
+
+
+def hf_stage_shell_script(
+    *,
+    workspace: str,
+    destination: str,
+    dataset_id: str,
+    split: str,
+    val_split: str,
+    text_column: str,
+    output_format: str,
+    limit: int,
+    val_rows: int,
+    max_chars: int,
+    max_val_chars: int,
+    shuffle_buffer: int,
+    seed: int,
+    revision: str,
+    token_env: str,
+    python_bin: str,
+    trust_remote_code: bool,
+    install_deps: bool,
+) -> str:
+    if output_format not in {"jsonl", "parquet", "nanochat-parquet"}:
+        fail("--format must be one of: jsonl, parquet, nanochat-parquet", 2)
+    if limit < 1:
+        fail("--limit must be at least 1", 2)
+    if val_rows < 0:
+        fail("--val-rows cannot be negative", 2)
+
+    config = {
+        "dataset_id": dataset_id,
+        "split": split,
+        "val_split": val_split,
+        "text_column": text_column,
+        "output_format": output_format,
+        "limit": limit,
+        "val_rows": val_rows,
+        "max_chars": max_chars,
+        "max_val_chars": max_val_chars,
+        "shuffle_buffer": shuffle_buffer,
+        "seed": seed,
+        "revision": revision,
+        "token_env": token_env,
+        "trust_remote_code": trust_remote_code,
+    }
+    maybe_install = (
+        f"{shlex.quote(python_bin)} -m pip install --user -q datasets pyarrow\n"
+        if install_deps
+        else ""
+    )
+    return f"""set -euo pipefail
+{shell_assign("WORKSPACE", workspace)}
+{shell_assign("DEST", destination)}
+{shell_assign("PYTHON_BIN", python_bin)}
+if [[ "${{PYTHON_BIN}}" != /* && "${{PYTHON_BIN}}" == */* ]]; then
+  PYTHON_BIN="${{WORKSPACE}}/${{PYTHON_BIN}}"
+fi
+export HF_HOME="${{WORKSPACE}}/scratch/huggingface"
+export HF_DATASETS_CACHE="${{HF_HOME}}/datasets"
+export HF_HUB_DISABLE_XET=1
+mkdir -p "${{DEST}}" "${{HF_HOME}}" "${{HF_DATASETS_CACHE}}"
+{maybe_install}"${{PYTHON_BIN}}" - <<'PY'
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+CONFIG = json.loads({json.dumps(json.dumps(config, sort_keys=True))})
+DEST = Path(os.environ["DEST"])
+
+try:
+    from datasets import load_dataset
+except ImportError as exc:
+    raise SystemExit(
+        "Missing Python package 'datasets'. Install it in the active remote "
+        "environment or rerun with --install-deps."
+    ) from exc
+
+
+def iter_texts(split: str, row_limit: int, char_limit: int, seed: int):
+    kwargs = {{
+        "split": split,
+        "streaming": True,
+    }}
+    if CONFIG["revision"]:
+        kwargs["revision"] = CONFIG["revision"]
+    if CONFIG["trust_remote_code"]:
+        kwargs["trust_remote_code"] = True
+    token = os.environ.get(CONFIG["token_env"], "").strip()
+    if token:
+        kwargs["token"] = token
+
+    dataset = load_dataset(CONFIG["dataset_id"], **kwargs)
+    if CONFIG["shuffle_buffer"] > 0:
+        dataset = dataset.shuffle(buffer_size=CONFIG["shuffle_buffer"], seed=seed)
+
+    rows = 0
+    chars = 0
+    for example in dataset:
+        value = example.get(CONFIG["text_column"])
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        yield text
+        rows += 1
+        chars += len(text)
+        if rows >= row_limit or (char_limit > 0 and chars >= char_limit):
+            break
+
+
+def collect(split: str, row_limit: int, char_limit: int, seed: int) -> list[str]:
+    rows = list(iter_texts(split, row_limit, char_limit, seed))
+    if not rows:
+        raise SystemExit(
+            f"No text rows collected from {{CONFIG['dataset_id']}} split={{split}} "
+            f"column={{CONFIG['text_column']}}."
+        )
+    return rows
+
+
+def write_jsonl(rows: list[str], path: Path) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for text in rows:
+            handle.write(json.dumps({{"text": text}}, ensure_ascii=False) + "\\n")
+
+
+def write_parquet(rows: list[str], path: Path) -> None:
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise SystemExit(
+            "Missing Python package 'pyarrow'. Use --format jsonl, install pyarrow, "
+            "or rerun with --install-deps."
+        ) from exc
+    table = pa.table({{"text": rows}})
+    pq.write_table(table, path, row_group_size=128)
+
+
+def write_manifest(files: list[Path], train_rows: int, val_rows: int = 0) -> None:
+    manifest = {{
+        "dataset": CONFIG["dataset_id"],
+        "split": CONFIG["split"],
+        "val_split": CONFIG["val_split"] if val_rows else None,
+        "text_column": CONFIG["text_column"],
+        "format": CONFIG["output_format"],
+        "train_rows": train_rows,
+        "val_rows": val_rows,
+        "files": [str(path) for path in files],
+        "hf_home": os.environ.get("HF_HOME"),
+        "hf_datasets_cache": os.environ.get("HF_DATASETS_CACHE"),
+    }}
+    (DEST / "tarka_dataset_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+fmt = CONFIG["output_format"]
+DEST.mkdir(parents=True, exist_ok=True)
+
+if fmt == "jsonl":
+    rows = collect(CONFIG["split"], CONFIG["limit"], CONFIG["max_chars"], CONFIG["seed"])
+    path = DEST / "data.jsonl"
+    write_jsonl(rows, path)
+    write_manifest([path], len(rows))
+    print(f"Wrote {{path}} ({{len(rows)}} rows)")
+elif fmt == "parquet":
+    rows = collect(CONFIG["split"], CONFIG["limit"], CONFIG["max_chars"], CONFIG["seed"])
+    path = DEST / "shard_00000.parquet"
+    write_parquet(rows, path)
+    write_manifest([path], len(rows))
+    print(f"Wrote {{path}} ({{len(rows)}} rows)")
+else:
+    train_rows = collect(CONFIG["split"], CONFIG["limit"], CONFIG["max_chars"], CONFIG["seed"])
+    val_rows = collect(
+        CONFIG["val_split"],
+        CONFIG["val_rows"],
+        CONFIG["max_val_chars"],
+        CONFIG["seed"] + 1,
+    ) if CONFIG["val_rows"] else []
+    train_path = DEST / "shard_00000.parquet"
+    val_path = DEST / "shard_99999.parquet"
+    write_parquet(train_rows, train_path)
+    files = [train_path]
+    if val_rows:
+        write_parquet(val_rows, val_path)
+        files.append(val_path)
+    write_manifest(files, len(train_rows), len(val_rows))
+    print(f"Wrote {{train_path}} ({{len(train_rows)}} train rows)")
+    if val_rows:
+        print(f"Wrote {{val_path}} ({{len(val_rows)}} val rows)")
+PY
+find "${{DEST}}" -maxdepth 1 -type f -print -exec ls -lh {{}} \\;
+"""
+
+
+def clone_repo_shell_script(*, repo_url: str, destination: str, ref: str, delete: bool) -> str:
+    delete_line = 'git clean -fdx\n' if delete else ""
+    checkout_line = f"git checkout --detach {shlex.quote(ref)}\n" if ref else ""
+    return f"""set -euo pipefail
+{shell_assign("REPO_URL", repo_url)}
+{shell_assign("DEST", destination)}
+mkdir -p "$(dirname "${{DEST}}")"
+if [[ -d "${{DEST}}/.git" ]]; then
+  cd "${{DEST}}"
+  git fetch --all --tags --prune
+else
+  git clone "${{REPO_URL}}" "${{DEST}}"
+  cd "${{DEST}}"
+fi
+{checkout_line}{delete_line}git rev-parse HEAD | tee .tarka_commit
+git status --short
+"""
 
 
 def stream_training_process(
@@ -950,6 +1184,144 @@ def training_upload(
     result = subprocess.run(
         rsync_prefix(remote) + ["-az", "--progress", source_arg, rsync_remote(remote, destination.rstrip("/") + "/")]
     )
+    raise typer.Exit(result.returncode)
+
+
+@training_app.command("stage-hf")
+def training_stage_hf(
+    dataset_id: str = typer.Argument(..., help="Hugging Face dataset id, for example org/name."),
+    org_slug: Optional[str] = typer.Option(None, "--org", help="Local org slug. Inferred from --target when possible."),
+    dest: str = typer.Option("datasets/main", "--to", help="Workspace-relative destination."),
+    target: Optional[str] = typer.Option(None, "--target", "-t", help="Remote training target."),
+    root: Optional[Path] = typer.Option(None, "--root", help="Local training root."),
+    split: str = typer.Option("train", "--split", help="Training split."),
+    val_split: str = typer.Option("test", "--val-split", help="Validation split for nanochat-parquet."),
+    text_column: str = typer.Option("text", "--text-column", help="Column containing training text."),
+    output_format: str = typer.Option("jsonl", "--format", help="jsonl, parquet, or nanochat-parquet."),
+    limit: int = typer.Option(1000, "--limit", min=1, help="Train row limit."),
+    val_rows: int = typer.Option(100, "--val-rows", min=0, help="Validation row limit for nanochat-parquet."),
+    max_chars: int = typer.Option(0, "--max-chars", min=0, help="Train character cap; 0 disables."),
+    max_val_chars: int = typer.Option(0, "--max-val-chars", min=0, help="Validation character cap; 0 disables."),
+    shuffle_buffer: int = typer.Option(10000, "--shuffle-buffer", min=0),
+    seed: int = typer.Option(42, "--seed"),
+    revision: Optional[str] = typer.Option(None, "--revision", help="Dataset revision/commit."),
+    token_env: str = typer.Option("HF_TOKEN", "--token-env", help="Remote env var containing a Hugging Face token."),
+    python_bin: str = typer.Option("python3", "--python", help="Remote/local Python executable."),
+    trust_remote_code: bool = typer.Option(False, "--trust-remote-code"),
+    install_deps: bool = typer.Option(False, "--install-deps", help="Run `python -m pip install --user datasets pyarrow` first."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the staging script without running it."),
+) -> None:
+    """Stage a bounded Hugging Face dataset sample into the workspace."""
+    if output_format not in {"jsonl", "parquet", "nanochat-parquet"}:
+        fail("--format must be one of: jsonl, parquet, nanochat-parquet", 2)
+
+    if target:
+        target_name, remote = resolve_target(target)
+        workspace = remote_workspace(remote)
+        destination = remote_path(remote, dest)
+        script = hf_stage_shell_script(
+            workspace=workspace,
+            destination=destination,
+            dataset_id=dataset_id,
+            split=split,
+            val_split=val_split,
+            text_column=text_column,
+            output_format=output_format,
+            limit=limit,
+            val_rows=val_rows,
+            max_chars=max_chars,
+            max_val_chars=max_val_chars,
+            shuffle_buffer=shuffle_buffer,
+            seed=seed,
+            revision=revision or "",
+            token_env=token_env,
+            python_bin=python_bin,
+            trust_remote_code=trust_remote_code,
+            install_deps=install_deps,
+        )
+        if dry_run:
+            typer.echo(f"# target: {target_name}")
+            typer.echo(f"# destination: {ssh_destination(remote)}:{destination}")
+            typer.echo(script)
+            return
+        raise typer.Exit(run_remote_shell(remote, script))
+
+    if not org_slug:
+        fail("--org is required unless --target is provided.", 2)
+    workspace_path = training_workspace(root or Path(default_training_root()), org_slug)
+    destination = abs_workspace_path(workspace_path, dest)
+    script = hf_stage_shell_script(
+        workspace=str(workspace_path),
+        destination=destination,
+        dataset_id=dataset_id,
+        split=split,
+        val_split=val_split,
+        text_column=text_column,
+        output_format=output_format,
+        limit=limit,
+        val_rows=val_rows,
+        max_chars=max_chars,
+        max_val_chars=max_val_chars,
+        shuffle_buffer=shuffle_buffer,
+        seed=seed,
+        revision=revision or "",
+        token_env=token_env,
+        python_bin=python_bin,
+        trust_remote_code=trust_remote_code,
+        install_deps=install_deps,
+    )
+    if dry_run:
+        typer.echo(script)
+        return
+    result = subprocess.run(["bash", "-s"], input=script, text=True)
+    raise typer.Exit(result.returncode)
+
+
+@training_app.command("clone-repo")
+def training_clone_repo(
+    repo_url: str = typer.Argument(..., help="Git URL for the training code repository."),
+    dest: Optional[str] = typer.Option(None, "--to", help="Workspace-relative destination. Defaults to repos/<repo-name>."),
+    ref: Optional[str] = typer.Option(None, "--ref", help="Commit, tag, or branch to check out."),
+    target: Optional[str] = typer.Option(None, "--target", "-t", help="Remote training target."),
+    org_slug: Optional[str] = typer.Option(None, "--org", help="Local org slug. Inferred from --target when possible."),
+    root: Optional[Path] = typer.Option(None, "--root", help="Local training root."),
+    delete: bool = typer.Option(False, "--delete", help="Clean untracked files after checkout."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the clone/update script without running it."),
+) -> None:
+    """Clone or update a training repository inside the workspace."""
+    repo_name = Path(repo_url.rstrip("/").removesuffix(".git")).name or "training-repo"
+    destination_relative = dest or f"repos/{repo_name}"
+
+    if target:
+        target_name, remote = resolve_target(target)
+        destination = remote_path(remote, destination_relative)
+        script = clone_repo_shell_script(
+            repo_url=repo_url,
+            destination=destination,
+            ref=ref or "",
+            delete=delete,
+        )
+        if dry_run:
+            typer.echo(f"# target: {target_name}")
+            typer.echo(f"# destination: {ssh_destination(remote)}:{destination}")
+            typer.echo(script)
+            return
+        raise typer.Exit(run_remote_shell(remote, script))
+
+    if not org_slug:
+        fail("--org is required unless --target is provided.", 2)
+    workspace_path = training_workspace(root or Path(default_training_root()), org_slug)
+    destination = abs_workspace_path(workspace_path, destination_relative)
+    script = clone_repo_shell_script(
+        repo_url=repo_url,
+        destination=destination,
+        ref=ref or "",
+        delete=delete,
+    )
+    if dry_run:
+        typer.echo(script)
+        return
+    result = subprocess.run(["bash", "-s"], input=script, text=True)
     raise typer.Exit(result.returncode)
 
 

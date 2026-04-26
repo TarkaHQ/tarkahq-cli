@@ -18,6 +18,12 @@ Install the CLI:
 curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | bash
 ```
 
+Pinned pilot install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TarkaHQ/tarkahq-cli/main/install.sh | TARKA_CLI_REF=v0.1.2 bash
+```
+
 If your shell cannot find `tarka`, add `~/.local/bin` to your `PATH`.
 This pilot installer currently uses the Python prototype. The intended
 long-term install path is a native `tarka` binary via Homebrew or a
@@ -114,19 +120,11 @@ The standard workspace layout is:
 Training data should be staged onto the GPU node before the run starts.
 Do not stream training data over the WAN during training.
 
-Examples:
+For a local directory:
 
 ```bash
 tarka training upload ./dataset --target dgx --to datasets/main
 ```
-
-```bash
-rclone copy remote:bucket/path <workspace>/datasets/main
-```
-
-For Hugging Face datasets, Tarka will either stage the data during the
-operator setup window or give you a shell with workspace-local cache
-defaults.
 
 ## 4. Confirm Code And Command
 
@@ -139,7 +137,48 @@ config_path:
 entrypoint_command:
 ```
 
-Sync the repo to the DGX workspace:
+Clone a remote repo directly on the DGX:
+
+```bash
+tarka training clone-repo https://github.com/karpathy/nanochat.git \
+  --target dgx \
+  --to repos/nanochat \
+  --ref <pinned-commit>
+```
+
+For nanochat on the DGX, install repo-local dependencies before staging
+the sample:
+
+```bash
+tarka training run --target dgx \
+  --run-name nanochat-setup \
+  --cwd repos/nanochat \
+  -- uv sync --extra gpu
+```
+
+For a Hugging Face dataset, stage a bounded sample on the DGX after the
+repo environment exists. This makes the training run read local parquet
+files and keeps Hugging Face cache under the workspace:
+
+```bash
+tarka training stage-hf IRIIS-RESEARCH/Nepali-Text-Corpus \
+  --target dgx \
+  --to scratch/nanochat/base_data_climbmix \
+  --text-column Article \
+  --format nanochat-parquet \
+  --python repos/nanochat/.venv/bin/python \
+  --split train \
+  --val-split test \
+  --limit 1000 \
+  --val-rows 100
+```
+
+Use `--install-deps` only if the active remote Python environment is
+missing `datasets` or `pyarrow`. For private datasets, set the agreed
+token in the remote environment as `HF_TOKEN`; do not commit tokens into
+repos or request files.
+
+Or sync a local repo from your laptop:
 
 ```bash
 tarka training sync-repo . --target dgx --to repos/<repo>
@@ -207,6 +246,16 @@ tarka training run --target dgx \
   --detach \
   --cwd repos/acme-train \
   -- python train.py --config configs/train.yml
+```
+
+Example toy nanochat pre-training smoke:
+
+```bash
+tarka training run --target dgx \
+  --run-name nanochat-smoke-001 \
+  --detach \
+  --cwd repos/nanochat \
+  -- bash -lc 'source .venv/bin/activate && export NANOCHAT_BASE_DIR="$WORKSPACE/scratch/nanochat" TORCH_COMPILE_DISABLE=1 && OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=1 -m scripts.base_train -- --device-type=cuda --depth=4 --head-dim=64 --window-pattern=L --max-seq-len=512 --device-batch-size=1 --total-batch-size=512 --eval-every=-1 --eval-tokens=512 --num-iterations=50 --run=dummy --model-tag=spark-smoke-d4-nepali --core-metric-every=-1 --sample-every=-1 --save-every=-1'
 ```
 
 The command automatically sets:

@@ -125,6 +125,8 @@ tarka training init
 tarka training handoff
 tarka training target add <name>
 tarka training upload ./dataset --target <name> --to datasets/main
+tarka training stage-hf <hf-dataset-id> --target <name> --to datasets/main
+tarka training clone-repo <git-url> --target <name> --to repos/<repo>
 tarka training sync-repo . --target <name> --to repos/<repo>
 tarka training check <org-slug>
 tarka training check --target <name>
@@ -148,6 +150,13 @@ Implemented in the scaffold:
   stores a remote DGX target.
 - `tarka training upload ./dataset --target dgx --to datasets/main`
   stages data through `rsync`.
+- `tarka training stage-hf IRIIS-RESEARCH/Nepali-Text-Corpus --target dgx --to scratch/nanochat/base_data_climbmix --text-column Article --format nanochat-parquet`
+  streams a bounded Hugging Face dataset sample on the training node,
+  writes workspace-local cache under `scratch/huggingface`, and creates
+  either JSONL, parquet, or nanochat-compatible parquet shards.
+- `tarka training clone-repo https://github.com/karpathy/nanochat.git --target dgx --to repos/nanochat --ref <commit>`
+  clones or updates a remote training repo and records the checked-out
+  commit in `.tarka_commit`.
 - `tarka training sync-repo . --target dgx --to repos/<repo>` syncs a
   local training repo through `rsync`.
 - `tarka training check <org> --root <path>` wraps
