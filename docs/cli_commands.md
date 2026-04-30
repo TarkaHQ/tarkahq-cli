@@ -11,6 +11,17 @@ The first implementation is intentionally small:
 - Training commands are Phase 0 operator helpers. They do not submit
   managed jobs or require scheduler state.
 
+## Brand
+
+```bash
+tarka banner
+```
+
+Implemented in the scaffold:
+
+- `tarka banner` prints the terminal version of the Tarka mountain mark
+  and wordmark.
+
 ## Config
 
 ```bash

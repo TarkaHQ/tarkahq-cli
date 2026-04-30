@@ -25,6 +25,14 @@ def test_training_help_exits_zero() -> None:
     assert "Operator-assisted training helpers" in result.output
 
 
+def test_banner_prints_tarka_header() -> None:
+    result = runner.invoke(app, ["banner"])
+
+    assert result.exit_code == 0
+    assert "████████" in result.output
+    assert "▲" in result.output
+
+
 def test_init_writes_config(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("TARKA_CONFIG_DIR", str(tmp_path / "config"))
 

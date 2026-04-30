@@ -173,6 +173,31 @@ tarka training stage-hf IRIIS-RESEARCH/Nepali-Text-Corpus \
   --val-rows 100
 ```
 
+What the staging values mean:
+
+| Value | Meaning |
+| --- | --- |
+| `IRIIS-RESEARCH/Nepali-Text-Corpus` | Hugging Face dataset id to stream from. |
+| `--target dgx` | Remote DGX target from `tarka training target add`. |
+| `--to scratch/nanochat/base_data_climbmix` | Workspace-relative output directory. Nanochat expects parquet shards under `$NANOCHAT_BASE_DIR/base_data_climbmix`; the run below sets `NANOCHAT_BASE_DIR="$WORKSPACE/scratch/nanochat"`. |
+| `--text-column Article` | Dataset column containing the training text. The CLI normalizes this to a parquet `text` column for nanochat. |
+| `--format nanochat-parquet` | Writes nanochat-compatible parquet shards plus `tarka_dataset_manifest.json`. |
+| `--python repos/nanochat/.venv/bin/python` | Python executable on the DGX. Relative paths are resolved under the workspace, so this becomes `<workspace>/repos/nanochat/.venv/bin/python`. |
+| `--split train` | Hugging Face split used for training rows. |
+| `--val-split test` | Hugging Face split used for validation rows. |
+| `--limit 1000` | Maximum number of training rows to stage for this trial. Increase only after the pipe test works. |
+| `--val-rows 100` | Maximum number of validation rows to stage. |
+
+The CLI also sets these remote environment variables while staging:
+
+| Variable | Meaning |
+| --- | --- |
+| `WORKSPACE` | Customer workspace on the DGX, for example `/data/tarka-training/users/<org-slug>`. |
+| `DEST` | Absolute staging destination under the workspace. |
+| `HF_HOME` | Hugging Face cache root under `<workspace>/scratch/huggingface`. |
+| `HF_DATASETS_CACHE` | Hugging Face datasets cache under `<workspace>/scratch/huggingface/datasets`. |
+| `HF_HUB_DISABLE_XET=1` | Disables Xet-backed Hugging Face transfer for this pilot path. |
+
 Use `--install-deps` only if the active remote Python environment is
 missing `datasets` or `pyarrow`. For private datasets, set the agreed
 token in the remote environment as `HF_TOKEN`; do not commit tokens into

@@ -27,6 +27,17 @@ from .config import (
 )
 
 
+MOUNTAIN_HEADER = """
+    ▲       ▲       ▲       ▲       ▲
+████████▒ █████▒ ██████▒ ██▒  ██▒ █████▒
+   ██▒   ██▒  ██▒██▒  ██▒██▒ ██▒ ██▒  ██▒
+ ▲ ██▒ ▲ ███████▒██████▒ █████▒  ███████▒ ▲
+   ██▒   ██▒  ██▒██▒ ██▒ ██▒ ██▒ ██▒  ██▒
+   ██▒ ▲ ██▒  ██▒██▒  ██▒██▒  ██▒██▒  ██▒ ▲
+ ▲      ▲       ▲       ▲       ▲      ▲
+""".strip("\n")
+
+
 app = typer.Typer(no_args_is_help=True, help="Tarka command line tools.")
 keys_app = typer.Typer(no_args_is_help=True, help="Manage Tarka API keys.")
 training_app = typer.Typer(no_args_is_help=True, help="Operator-assisted training helpers.")
@@ -49,6 +60,20 @@ def emit(data: object, as_json: bool) -> None:
     else:
         for key, value in data.items():
             typer.echo(f"{key}: {value}")
+
+
+def emit_banner() -> None:
+    accent_chars = set("▲▒")
+    for line in MOUNTAIN_HEADER.splitlines():
+        styled = "".join(
+            typer.style(char, fg=typer.colors.BRIGHT_BLACK)
+            if char in accent_chars
+            else typer.style(char, fg=typer.colors.WHITE, bold=True)
+            if char != " "
+            else char
+            for char in line
+        )
+        typer.echo(styled)
 
 
 def fail(message: str, code: int = 1) -> None:
@@ -651,6 +676,12 @@ def stream_training_process(
         clear_status_line()
     typer.echo(f"exit_code: {return_code}")
     return return_code
+
+
+@app.command()
+def banner() -> None:
+    """Show the Tarka CLI header."""
+    emit_banner()
 
 
 @app.command()
